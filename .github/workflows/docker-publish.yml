@@ -1,0 +1,94 @@
+name: Push Docker Image
+
+on:
+  workflow_dispatch:
+
+  release:
+    types: [ published ]
+
+permissions:
+  packages: write
+  contents: read
+
+env:
+  IMAGE_NAME: pandora
+  PLATFORMS: linux/amd64,linux/arm64
+
+jobs:
+  get-tags:
+    runs-on: ubuntu-latest
+    outputs:
+      image_version: ${{ steps.get_image_version.outputs.image_version }}
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Get Image Version
+        id: get_image_version
+        run: |
+          # Strip git ref prefix from version
+          IMAGE_VERSION=$(echo "${{ github.ref }}" | sed -e 's,.*/\(.*\),\1,')
+
+          # Strip "v" prefix from tag name
+          [[ "${{ github.ref }}" == "refs/tags/"* ]] && IMAGE_VERSION=$(echo $IMAGE_VERSION | sed -e 's/^v//')
+
+          echo VERSION=$IMAGE_VERSION
+          echo "image_version=${IMAGE_VERSION}" >> $GITHUB_OUTPUT
+
+  push-ghcr:
+    needs: get-tags
+    runs-on: ubuntu-latest
+    env:
+      REGISTRY: ghcr.io
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Docker Setup QEMU
+        uses: docker/setup-qemu-action@v2
+
+      - name: Set up Docker BuildX
+        uses: docker/setup-buildx-action@v2
+
+      - name: Docker Login
+        uses: docker/login-action@v2
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and Push
+        uses: docker/build-push-action@v4
+        with:
+          push: true
+          platforms: ${{ env.PLATFORMS }}
+          tags: |
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ needs.get-tags.outputs.image_version }}
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:latest
+
+  push-docker-hub:
+    needs: get-tags
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Docker Setup QEMU
+        uses: docker/setup-qemu-action@v2
+
+      - name: Set up Docker BuildX
+        uses: docker/setup-buildx-action@v2
+
+      - name: Docker Login
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and Push
+        uses: docker/build-push-action@v4
+        with:
+          push: true
+          platforms: ${{ env.PLATFORMS }}
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ needs.get-tags.outputs.image_version }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest
